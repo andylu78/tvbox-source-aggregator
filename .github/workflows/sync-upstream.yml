@@ -8,20 +8,26 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write  # 强制开启仓库读写权限
     steps:
-      - uses: actions/checkout@v4
+      - name: 拉取当前仓库代码
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main  # 明确指定操作 main 分支
 
-      - name: 配置上游地址
+      - name: 添加上游仓库地址
         run: git remote add upstream https://github.com/qq148376839/tvbox-source-aggregator.git
 
       - name: 拉取上游更新
         run: git fetch upstream
 
-      - name: 合并并推送到自己仓库
+      - name: 合并上游代码到本地
         run: |
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
           git merge upstream/main --no-edit
-          git push origin main
+
+      - name: 推送到自己的仓库
+        run: git push origin main
