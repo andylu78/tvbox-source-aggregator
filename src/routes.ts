@@ -15,7 +15,7 @@ import { lookupLiveUrl } from './core/live-source';
 import { adminHtml } from './core/admin';
 import { dashboardHtml } from './core/dashboard';
 import { configEditorHtml } from './core/config-editor';
-import { siteFingerprint, loadBlacklist, saveBlacklist, saveRegexRule, deleteRegexRule, updateRegexRule, validateRegexRule, testRegexAgainstSites } from './core/blacklist';
+import { siteFingerprint, loadBlacklist, saveBlacklist, saveRegexRule, deleteRegexRule, updateRegexRule, validateRegexRule, testRegexAgainstSites, applyBlacklist } from './core/blacklist';
 import { loadSearchQuota, saveSearchQuota } from './core/search-quota';
 import { loadCredentials, saveCredential, deleteCredential, loadCredentialPolicy, saveCredentialPolicy } from './core/credential-store';
 import { generateQR, pollQRStatus, passwordLogin, PLATFORM_NAMES, QR_PLATFORMS, PASSWORD_PLATFORMS } from './core/cloud-login';
@@ -1393,6 +1393,7 @@ export function createApp(deps: AppDeps): Hono {
       list.push(id);
     }
     await saveBlacklist(storage, blacklist);
+    await patchMergedConfig();
 
     return c.json({ success: true });
   });
@@ -1430,6 +1431,7 @@ export function createApp(deps: AppDeps): Hono {
       }
     }
     await saveBlacklist(storage, blacklist);
+    await patchMergedConfig();
 
     return c.json({ success: true, added });
   });
@@ -1456,9 +1458,25 @@ export function createApp(deps: AppDeps): Hono {
     const key = type as keyof typeof blacklist;
     (blacklist[key] as string[]) = (blacklist[key] as string[]).filter((v: string) => v !== id);
     await saveBlacklist(storage, blacklist);
+    await patchMergedConfig();
 
     return c.json({ success: true });
   });
+
+  // ─── 黑名单变更后实时 patch merged_config ──────────────
+  async function patchMergedConfig(): Promise<void> {
+    const fullRaw = await storage.get(KV_MERGED_CONFIG_FULL);
+    if (!fullRaw) return;
+    const blacklist = await loadBlacklist(storage);
+    const hasBlacklist = blacklist.sites.length > 0 || blacklist.parses.length > 0 || blacklist.lives.length > 0 || blacklist.regexRules.some(r => r.enabled);
+    if (!hasBlacklist) {
+      await storage.put(KV_MERGED_CONFIG, fullRaw);
+      return;
+    }
+    const fullConfig: TVBoxConfig = JSON.parse(fullRaw);
+    const { config: filtered } = await applyBlacklist(fullConfig, blacklist);
+    await storage.put(KV_MERGED_CONFIG, JSON.stringify(filtered));
+  }
 
   // ─── 正则黑名单 ─────────────────────────────────────────
   app.get('/admin/blacklist/regex', async (c) => {
@@ -1485,6 +1503,7 @@ export function createApp(deps: AppDeps): Hono {
     };
     const blacklist = await loadBlacklist(storage);
     await saveRegexRule(storage, blacklist, rule);
+    await patchMergedConfig();
     return c.json({ success: true, rule });
   });
 
@@ -1503,6 +1522,7 @@ export function createApp(deps: AppDeps): Hono {
     const blacklist = await loadBlacklist(storage);
     if (!blacklist.regexRules.find(r => r.id === id)) return c.json({ error: 'Rule not found' }, 404);
     await updateRegexRule(storage, blacklist, id, body);
+    await patchMergedConfig();
     return c.json({ success: true });
   });
 
@@ -1512,6 +1532,7 @@ export function createApp(deps: AppDeps): Hono {
     const blacklist = await loadBlacklist(storage);
     if (!blacklist.regexRules.find(r => r.id === id)) return c.json({ error: 'Rule not found' }, 404);
     await deleteRegexRule(storage, blacklist, id);
+    await patchMergedConfig();
     return c.json({ success: true });
   });
 
